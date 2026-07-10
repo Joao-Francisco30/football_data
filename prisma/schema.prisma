@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model League {
+  id      Int    @id
+  code    String @unique
+  name    String
+  country String
+
+  teams Team[]
+}
+
+model Team {
+  id        Int    @id
+  name      String
+  shortName String?
+  founded   Int?
+  stadium   String?
+  website   String?
+  logo      String?
+
+  leagueId  Int
+  league    League @relation(fields: [leagueId], references: [id])
+
+  seasonStats SeasonStats[]
+  trophies    Trophy[]
+}
+
+model SeasonStats {
+  id Int @id @default(autoincrement())
+
+  season String
+
+  matchesPlayed Int
+  wins          Int
+  draws         Int
+  losses        Int
+
+  goalsFor     Int
+  goalsAgainst Int
+  points       Int
+
+  teamId Int
+  team   Team @relation(fields: [teamId], references: [id])
+}
+
+model Trophy {
+  id Int @id @default(autoincrement())
+
+  teamId Int
+  team   Team @relation(fields: [teamId], references: [id])
+
+  trophy String
+  year   Int
+}
