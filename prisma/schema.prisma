@@ -53,6 +53,8 @@ model SeasonStats {
 
   teamId Int
   team   Team @relation(fields: [teamId], references: [id])
+
+  @@unique([teamId, season])
 }
 
 model Trophy {

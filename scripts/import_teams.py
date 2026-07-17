@@ -7,7 +7,7 @@ load_dotenv()
 
 API_KEY = os.getenv("FOOTBALL_API_KEY")
 
-headers = {
+HEADERS = {
     "X-Auth-Token": API_KEY
 }
 
@@ -19,51 +19,80 @@ conn = psycopg2.connect(
     port="5432"
 )
 
-cursor = conn.cursor()
+try:
+    cursor = conn.cursor()
 
-# Get all leagues from database
-cursor.execute('SELECT id, code FROM "League"')
-leagues = cursor.fetchall()
+    cursor.execute('SELECT id, code FROM "League"')
+    leagues = cursor.fetchall()
 
-for league_id, league_code in leagues:
+    imported_count = 0
 
-    print(f"Importing teams from {league_code}...")
+    for league_id, league_code in leagues:
 
-    response = requests.get(
-        f"https://api.football-data.org/v4/competitions/{league_code}/teams",
-        headers=headers
-    )
+        print(f"Importing teams from {league_code}...")
 
-    if response.status_code != 200:
-        print(f"Failed to get teams for {league_code}")
-        continue
-
-    data = response.json()
-
-    for team in data["teams"]:
-
-        cursor.execute(
-            '''
-            INSERT INTO "Team"
-            (id, name, "shortName", founded, stadium, website, logo, "leagueId")
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            ''',
-            (
-                team["id"],
-                team["name"],
-                team.get("shortName"),
-                team.get("founded"),
-                team.get("venue"),
-                team.get("website"),
-                team.get("crest"),
-                league_id
-            )
+        response = requests.get(
+            f"https://api.football-data.org/v4/competitions/{league_code}/teams",
+            headers=HEADERS,
+            timeout=30
         )
 
-conn.commit()
+        if response.status_code != 200:
+            print(
+                f"Failed to get teams for {league_code}: "
+                f"{response.status_code}"
+            )
+            continue
 
-cursor.close()
-conn.close()
+        data = response.json()
 
-print("Teams imported successfully.")
+        for team in data["teams"]:
+
+            cursor.execute(
+                '''
+                INSERT INTO "Team"
+                (
+                    id,
+                    name,
+                    "shortName",
+                    founded,
+                    stadium,
+                    website,
+                    logo,
+                    "leagueId"
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+
+                ON CONFLICT (id)
+                DO UPDATE SET
+                    name = EXCLUDED.name,
+                    "shortName" = EXCLUDED."shortName",
+                    founded = EXCLUDED.founded,
+                    stadium = EXCLUDED.stadium,
+                    website = EXCLUDED.website,
+                    logo = EXCLUDED.logo,
+                    "leagueId" = EXCLUDED."leagueId"
+                ''',
+                (
+                    team["id"],
+                    team["name"],
+                    team.get("shortName"),
+                    team.get("founded"),
+                    team.get("venue"),
+                    team.get("website"),
+                    team.get("crest"),
+                    league_id
+                )
+            )
+
+            imported_count += 1
+
+    conn.commit()
+
+    print(f"{imported_count} teams processed.")
+
+finally:
+    cursor.close()
+    conn.close()
+
+print("Team import completed.")
