@@ -1,17 +1,5 @@
-import os
-import requests
-import psycopg2
-from dotenv import load_dotenv
-
-load_dotenv()
-
-API_KEY = os.getenv("FOOTBALL_API_KEY")
-
-HEADERS = {
-    "X-Auth-Token": API_KEY
-}
-
-COMPETITIONS_URL = "https://api.football-data.org/v4/competitions"
+from utils import api
+from utils.db import db_connection
 
 TARGET_LEAGUES = {
     "PL",   # Premier League
@@ -20,61 +8,44 @@ TARGET_LEAGUES = {
     "BL1",  # Bundesliga
     "FL1",  # Ligue 1
     "PPL",  # Primeira Liga
-    "DED"   # Eredivisie
+    "DED",  # Eredivisie
 }
 
-conn = psycopg2.connect(
-    dbname="football_data",
-    user="postgres",
-    password=os.getenv("POSTGRES_PASSWORD"),
-    host="localhost",
-    port="5432"
-)
 
-try:
-    cursor = conn.cursor()
-
-    response = requests.get(
-        COMPETITIONS_URL,
-        headers=HEADERS
-    )
+def main():
+    response = api.get("/competitions")
 
     if response.status_code != 200:
-        print(f"API request failed: {response.status_code}")
-        exit()
+        raise RuntimeError(f"Leagues request failed: {response.status_code}")
 
-    data = response.json()
+    leagues = [
+        competition
+        for competition in response.json()["competitions"]
+        if competition["code"] in TARGET_LEAGUES
+    ]
 
-    imported_count = 0
+    with db_connection() as conn:
+        with conn.cursor() as cursor:
+            for league in leagues:
+                cursor.execute(
+                    '''
+                    INSERT INTO "League" (id, code, name, country)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        code = EXCLUDED.code,
+                        name = EXCLUDED.name,
+                        country = EXCLUDED.country
+                    ''',
+                    (
+                        league["id"],
+                        league["code"],
+                        league["name"],
+                        league["area"]["name"],
+                    ),
+                )
 
-    for league in data["competitions"]:
+    print(f"{len(leagues)} leagues processed.")
 
-        if league["code"] not in TARGET_LEAGUES:
-            continue
 
-        cursor.execute(
-            '''
-            INSERT INTO "League"
-            (id, code, name, country)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            ''',
-            (
-                league["id"],
-                league["code"],
-                league["name"],
-                league["area"]["name"]
-            )
-        )
-
-        imported_count += 1
-
-    conn.commit()
-
-    print(f"{imported_count} leagues processed.")
-
-finally:
-    cursor.close()
-    conn.close()
-
-print("League import completed.")
+if __name__ == "__main__":
+    main()

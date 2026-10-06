@@ -1,98 +1,65 @@
-import os
-import requests
-import psycopg2
-from dotenv import load_dotenv
+from utils import api
+from utils.db import db_connection
 
-load_dotenv()
 
-API_KEY = os.getenv("FOOTBALL_API_KEY")
-
-HEADERS = {
-    "X-Auth-Token": API_KEY
-}
-
-conn = psycopg2.connect(
-    dbname="football_data",
-    user="postgres",
-    password=os.getenv("POSTGRES_PASSWORD"),
-    host="localhost",
-    port="5432"
-)
-
-try:
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT id, code FROM "League"')
-    leagues = cursor.fetchall()
-
+def main():
     imported_count = 0
+    failed = []
 
-    for league_id, league_code in leagues:
+    with db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT id, code FROM "League"')
+            leagues = cursor.fetchall()
 
-        print(f"Importing teams from {league_code}...")
+            if not leagues:
+                raise RuntimeError("No leagues found. Run import_leagues.py first.")
 
-        response = requests.get(
-            f"https://api.football-data.org/v4/competitions/{league_code}/teams",
-            headers=HEADERS,
-            timeout=30
-        )
+            for league_id, league_code in leagues:
+                print(f"Importing teams from {league_code}...")
 
-        if response.status_code != 200:
-            print(
-                f"Failed to get teams for {league_code}: "
-                f"{response.status_code}"
-            )
-            continue
+                response = api.get(f"/competitions/{league_code}/teams")
 
-        data = response.json()
+                if response.status_code != 200:
+                    print(
+                        f"Failed to get teams for {league_code}: "
+                        f"{response.status_code}"
+                    )
+                    failed.append(league_code)
+                    continue
 
-        for team in data["teams"]:
-
-            cursor.execute(
-                '''
-                INSERT INTO "Team"
-                (
-                    id,
-                    name,
-                    "shortName",
-                    founded,
-                    stadium,
-                    website,
-                    logo,
-                    "leagueId"
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-
-                ON CONFLICT (id)
-                DO UPDATE SET
-                    name = EXCLUDED.name,
-                    "shortName" = EXCLUDED."shortName",
-                    founded = EXCLUDED.founded,
-                    stadium = EXCLUDED.stadium,
-                    website = EXCLUDED.website,
-                    logo = EXCLUDED.logo,
-                    "leagueId" = EXCLUDED."leagueId"
-                ''',
-                (
-                    team["id"],
-                    team["name"],
-                    team.get("shortName"),
-                    team.get("founded"),
-                    team.get("venue"),
-                    team.get("website"),
-                    team.get("crest"),
-                    league_id
-                )
-            )
-
-            imported_count += 1
-
-    conn.commit()
+                for team in response.json()["teams"]:
+                    cursor.execute(
+                        '''
+                        INSERT INTO "Team"
+                            (id, name, "shortName", founded, stadium, website, logo, "leagueId")
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            "shortName" = EXCLUDED."shortName",
+                            founded = EXCLUDED.founded,
+                            stadium = EXCLUDED.stadium,
+                            website = EXCLUDED.website,
+                            logo = EXCLUDED.logo,
+                            "leagueId" = EXCLUDED."leagueId"
+                        ''',
+                        (
+                            team["id"],
+                            team["name"],
+                            team.get("shortName"),
+                            team.get("founded"),
+                            team.get("venue"),
+                            team.get("website"),
+                            team.get("crest"),
+                            league_id,
+                        ),
+                    )
+                    imported_count += 1
 
     print(f"{imported_count} teams processed.")
 
-finally:
-    cursor.close()
-    conn.close()
+    if failed:
+        raise RuntimeError(f"Teams could not be fetched for: {', '.join(failed)}")
 
-print("Team import completed.")
+
+if __name__ == "__main__":
+    main()
